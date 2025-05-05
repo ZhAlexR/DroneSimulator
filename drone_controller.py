@@ -14,37 +14,41 @@ from constants import (
     DEFAULT_SLEEP,
 )
 from geodesy import Geodesy, calculate_heading_error, shortest_rotation_direction
+from logger import logger
 
 
 class DroneController:
     def __init__(self, connection_str: str):
+        logger.info("Connecting to vehicle on %s", connection_str)
         self.vehicle = connect(connection_str, wait_ready=True)
         self.geodesy = Geodesy()
         self._alt_hold_stop = threading.Event()
 
     def arm(self):
-        print("Arming motors...")
+        logger.info("Arming motors...")
         self.vehicle.armed = True
         while not self.vehicle.armed:
             time.sleep(DEFAULT_SLEEP)
+        logger.info("Motors armed.")
 
     def set_mode(self, mode_name: str):
-        print(f"Switching to {mode_name} mode...")
+        logger.info("Switching to %s mode...", mode_name)
         if mode_name == "ALT_HOLD":
             self._start_alt_hold()
             return
         if mode_name == "GUIDED":
             self._start_guided()
             return
+        logger.warning("Mode %s not recognized.", mode_name)
 
     def takeoff(self, target_alt):
-        print(f"Taking off to {target_alt} m...")
+        logger.info("Taking off to %.1f m...", target_alt)
         self.vehicle.simple_takeoff(target_alt)
         while True:
             alt = self.vehicle.location.global_relative_frame.alt
-            print(f"  Alt = {alt:.1f} m")
+            logger.info("  Alt = %.1f m", alt)
             if alt >= target_alt - 1.0:
-                print("Reached target altitude.")
+                logger.info("Reached target altitude.")
                 break
             time.sleep(DEFAULT_SLEEP)
 
@@ -54,15 +58,17 @@ class DroneController:
             tolerance: float = DEFAULT_YAW_TOLERANCE,
             yaw_rate: int = 10,
     ):
-
+        logger.info("Rotating to heading %.1f° ±%.1f°", heading, tolerance)
         self._send_yaw_command(heading, yaw_rate)
         while True:
             curr = self.vehicle.heading
             error = abs(calculate_heading_error(heading, curr))
             if error <= tolerance:
-                print(f"→ Yaw reached: {curr:.1f}° ±{tolerance}°")
+                logger.info("→ Yaw reached: %.1f° ±%.1f°", curr, tolerance)
                 break
-            print(f"Rotating... Curr {curr:.1f}°, Target {heading:.1f}°, Δ {error:.1f}°")
+            logger.debug(
+                "Rotating... Curr %.1f°, Target %.1f°, Δ %.1f°", curr, heading, error
+            )
             time.sleep(DEFAULT_SLEEP / 10)
 
     def move_to(
@@ -72,15 +78,19 @@ class DroneController:
             forward_pwm: int = DEFAULT_FORWARD_PWM,
             roll_gain: float = DEFAULT_ROLL_GAIN,
     ):
+        logger.info(
+            "Moving to %s with tolerance ±%.1f m", target, tolerance
+        )
         while True:
             loc = self.vehicle.location.global_relative_frame
             distance, bearing = self.geodesy.inverse(loc, target)
 
             error = calculate_heading_error(bearing, self.vehicle.heading)
-
-            print(f"Distance: {distance:.2f} m | Bearing error: {error:.1f}°")
+            logger.debug(
+                "Distance: %.2f m | Bearing error: %.1f°", distance, error
+            )
             if distance <= tolerance:
-                print(f"→ Arrived within ±{tolerance} m")
+                logger.info("→ Arrived within ±%.1f m", tolerance)
                 break
 
             self.vehicle.channels.overrides[CHANNEL_PITCH] = forward_pwm
@@ -92,17 +102,21 @@ class DroneController:
 
         for ch in (CHANNEL_PITCH, CHANNEL_ROLL):
             self.vehicle.channels.overrides[ch] = CENTER_PWM
+        logger.info("Movement overrides cleared.")
 
     def _start_alt_hold(self):
+        logger.info("Starting ALT_HOLD mode and altitude hold loop.")
         self.vehicle.mode = VehicleMode("ALT_HOLD")
         time.sleep(DEFAULT_SLEEP)
         threading.Thread(target=self._alt_hold_loop, daemon=True).start()
 
     def _stop_alt_hold(self):
+        logger.info("Stopping ALT_HOLD mode.")
         self._alt_hold_stop.set()
         self.vehicle.channels.overrides.pop(CHANNEL_THROTTLE, None)
 
     def _start_guided(self):
+        logger.info("Starting GUIDED mode.")
         if self.vehicle.mode == VehicleMode("ALT_HOLD"):
             self._stop_alt_hold()
         self.vehicle.mode = VehicleMode("GUIDED")
@@ -118,6 +132,7 @@ class DroneController:
         pwm = int(CENTER_PWM + kp * error * 100)
         pwm = max(1000, min(2000, pwm))
         self.vehicle.channels.overrides[CHANNEL_THROTTLE] = pwm
+        logger.debug("ALT_HOLD PID: curr=%.1f, target=%.1f, PWM=%d", curr_alt, target_altitude, pwm)
 
     def _alt_hold_loop(self):
         while not self._alt_hold_stop.is_set():
@@ -137,3 +152,4 @@ class DroneController:
             heading, yaw_rate, direction, 0, 0, 0, 0
         )
         self.vehicle.send_mavlink(msg)
+        logger.debug("Yaw command sent: heading=%.1f, rate=%d, dir=%d", heading, yaw_rate, direction)
