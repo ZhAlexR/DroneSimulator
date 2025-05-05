@@ -76,10 +76,15 @@ class DroneController:
             target: LocationGlobalRelative,
             tolerance: float = 1.0,
             forward_pwm: int = DEFAULT_FORWARD_PWM,
+            slow_pwm: int = None,
             roll_gain: float = DEFAULT_ROLL_GAIN,
     ):
+        if slow_pwm is None:
+            slow_pwm = int((CENTER_PWM + forward_pwm) / 2)
+
         logger.info(
-            "Moving to %s with tolerance ±%.1f m", target, tolerance
+            "Moving to %s with tolerance ±%.1f m (slow_pwm=%d @ ≤10 m)",
+            target, tolerance, slow_pwm
         )
         while True:
             loc = self.vehicle.location.global_relative_frame
@@ -93,7 +98,12 @@ class DroneController:
                 logger.info("→ Arrived within ±%.1f m", tolerance)
                 break
 
-            self.vehicle.channels.overrides[CHANNEL_PITCH] = forward_pwm
+            if distance <= 10.0:
+                pitch_pwm = slow_pwm
+            else:
+                pitch_pwm = forward_pwm
+
+            self.vehicle.channels.overrides[CHANNEL_PITCH] = pitch_pwm
             roll_pwm = int(CENTER_PWM + roll_gain * error * 10)
             roll_pwm = max(1000, min(2000, roll_pwm))
             self.vehicle.channels.overrides[CHANNEL_ROLL] = roll_pwm
