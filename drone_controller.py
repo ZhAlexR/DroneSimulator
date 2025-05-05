@@ -13,16 +13,7 @@ from constants import (
     DEFAULT_ROLL_GAIN,
     DEFAULT_SLEEP,
 )
-from geodesy import Geodesy
-
-
-def calculate_heading_error(target: float, current: float) -> float:
-    return target - current
-
-
-def shortest_rotation_direction(target: float, current: float) -> int:
-    error = calculate_heading_error(target, current)
-    return 1 if error > 0 else -1
+from geodesy import Geodesy, calculate_heading_error, shortest_rotation_direction
 
 
 class DroneController:
