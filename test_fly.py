@@ -1,7 +1,6 @@
-#!/usr/bin/env python
 from dronekit import connect, VehicleMode, LocationGlobalRelative
 from pymavlink import mavutil
-import time, math, threading
+import time, threading
 import pyproj
 
 TARGET_COORDINATES = 50.443326, 30.448078
@@ -37,24 +36,69 @@ def altitude_hold_loop(vehicle, target_alt, stop_event):
         time.sleep(0.1)
 
 
-def move_forward_to_point(vehicle, dest_lat, dest_lon, tolerance=1.0, pwm_forward=1250):
+def rotate_to_heading_alt_hold(vehicle, target_heading, threshold=2, pwm_rate=1600):
     """
-    Moves forward by applying a constant pitch (channel 2 override).
-    Because the roll/pitch mapping may be inverted, pwm_forward < 1500 gives forward tilt.
-    Continues until within tolerance (m) of target.
+    Yaws in ALT_HOLD by RC override on channel 4 until
+    vehicle.heading is within ±threshold of target_heading.
+    pwm_rate: e.g. 1600µs for moderate yaw speed.
+    """
+
+    def shortest_dir(current, target):
+        diff = (target - current + 360) % 360
+        return 1 if diff <= 180 else -1
+
+    while True:
+        current = vehicle.heading
+        delta = abs((current - target_heading + 180) % 360 - 180)
+        if delta <= threshold:
+            print(f"→ Yaw reached: {current:.1f}° ±{threshold}°")
+            break
+
+        direction = shortest_dir(current, target_heading)
+        # direction=1 → CW → ch4 > 1500; direction=-1 → CCW → ch4 < 1500
+        pwm = 1500 + direction * (pwm_rate - 1500)
+        vehicle.channels.overrides['4'] = pwm
+
+        print(f"Yawing: current {current:.1f}°, target {target_heading}°, delta {delta:.1f}°")
+        time.sleep(0.1)
+
+    # center yaw stick
+    vehicle.channels.overrides['4'] = 1500
+
+
+def move_forward_with_course_correction(vehicle, dest_lat, dest_lon,
+                                        tolerance=1.0,
+                                        pwm_forward=1300,
+                                        roll_gain=0.3):
+    """
+    Moves forward by applying constant pitch (channel 2 override) and
+    corrects course by adjusting roll (channel 1 override) based on
+    bearing error. Continues until within tolerance (m) of target.
     """
     target = LocationGlobalRelative(dest_lat, dest_lon, 0)
     while True:
         loc = vehicle.location.global_relative_frame
-        dist, _ = get_distance_and_azimuth(loc, target)
-        print(f"Distance to the target: {dist:.2f} m")
+        dist, bearing = get_distance_and_azimuth(loc, target)
+        heading = vehicle.heading
+        # compute shortest angular difference
+        error = (bearing - heading + 540) % 360 - 180
+
+        print(f"Distance: {dist:.2f} m | Bearing error: {error:.1f}°")
         if dist <= tolerance:
             print(f"→ Arrived at target (±{tolerance} m)")
             break
+
+        # forward pitch
         vehicle.channels.overrides['2'] = pwm_forward
+        # roll correction: map error to roll stick
+        roll_offset = int(1500 + roll_gain * error * 10)
+        roll_offset = max(1000, min(2000, roll_offset))
+        vehicle.channels.overrides['1'] = roll_offset
+
         time.sleep(0.1)
-    # center pitch
+    # center sticks
     vehicle.channels.overrides['2'] = 1500
+    vehicle.channels.overrides['1'] = 1500
 
 
 def condition_yaw(vehicle, heading, yaw_rate=10, direction=1, relative=False):
@@ -100,8 +144,11 @@ def arm_and_takeoff(vehicle, target_alt):
 def land_and_disarm(vehicle, stop_event):
     print("Landing…")
     stop_event.set()
-    vehicle.mode = VehicleMode("LAND")
+    land_mode = VehicleMode("LAND")
     vehicle.channels.overrides = {}
+    vehicle.mode = land_mode
+    while vehicle.mode != VehicleMode("LAND"):
+        time.sleep(0.5)
     while vehicle.armed:
         time.sleep(0.5)
     print("Landed and disarmed.")
@@ -116,7 +163,8 @@ def main():
     target_alt = 15  # takeoff altitude (m)
     target_lat, target_lon = TARGET_COORDINATES
     yaw_tolerance = 2  # deg
-    forward_pwm = 1400  # pitch override for forward motion (invert if needed)
+    forward_pwm = 1300  # pitch override for forward motion
+    roll_gain = 0.4  # tuning for turn correction
 
     # Take off
     arm_and_takeoff(vehicle, target_alt)
@@ -140,13 +188,16 @@ def main():
     )
     th.start()
 
-    # Move forward to waypoint maintaining heading and altitude
-    print("Moving forward to waypoint…")
-    move_forward_to_point(vehicle, target_lat, target_lon)
+    # Move forward with course correction
+    print("Moving forward to waypoint with course correction…")
+    move_forward_with_course_correction(
+        vehicle, target_lat, target_lon,
+        pwm_forward=forward_pwm,
+        roll_gain=roll_gain
+    )
 
-    # Land
-    land_and_disarm(vehicle, stop_event)
-    vehicle.close()
+    print("Rotating to 350° in ALT_HOLD…")
+    rotate_to_heading_alt_hold(vehicle, 350, threshold=yaw_tolerance, pwm_rate=1600)
     print("Mission complete.")
 
 
