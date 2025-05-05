@@ -106,9 +106,10 @@ class DroneController:
 
     def _start_alt_hold(self):
         logger.info("Starting ALT_HOLD mode and altitude hold loop.")
+        current_alt = self.vehicle.location.global_relative_frame.alt
         self.vehicle.mode = VehicleMode("ALT_HOLD")
         time.sleep(DEFAULT_SLEEP)
-        threading.Thread(target=self._alt_hold_loop, daemon=True).start()
+        threading.Thread(target=self._alt_hold_loop, args=(current_alt,), daemon=True).start()
 
     def _stop_alt_hold(self):
         logger.info("Stopping ALT_HOLD mode.")
@@ -124,19 +125,15 @@ class DroneController:
 
     def _alt_hold_pid(self, kp: float = 0.8, target_altitude: float = None):
         curr_alt = self.vehicle.location.global_relative_frame.alt
-
-        if target_altitude is None:
-            target_altitude = curr_alt
-
         error = target_altitude - curr_alt
         pwm = int(CENTER_PWM + kp * error * 100)
         pwm = max(1000, min(2000, pwm))
         self.vehicle.channels.overrides[CHANNEL_THROTTLE] = pwm
         logger.debug("ALT_HOLD PID: curr=%.1f, target=%.1f, PWM=%d", curr_alt, target_altitude, pwm)
 
-    def _alt_hold_loop(self):
+    def _alt_hold_loop(self, target_altitude: float):
         while not self._alt_hold_stop.is_set():
-            self._alt_hold_pid()
+            self._alt_hold_pid(target_altitude=target_altitude)
             time.sleep(DEFAULT_SLEEP / 10)
 
     def _send_yaw_command(
