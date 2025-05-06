@@ -2,7 +2,7 @@ import time
 
 from dronekit import LocationGlobalRelative
 
-from constants import TARGET_COORDINATES, DEFAULT_TAKEOFF_ALT, TARGET_BEARING_AFTER_ARRIVING
+from constants import TARGET_COORDINATES, DEFAULT_TAKEOFF_ALT, TARGET_BEARING_AFTER_ARRIVING, SLOW_FORWARD_PWM
 from drone_controller import DroneController
 from logger import logger
 
@@ -25,13 +25,13 @@ def main() -> None:
     controller.set_mode("ALT_HOLD")
 
     logger.info("Moving to waypoint with course correction...")
-    controller.move_to(target_loc)
+    controller.move_to(target=target_loc, slow_pwm=SLOW_FORWARD_PWM)
 
     logger.info("Final yaw to 350° in GUIDED...")
     controller.set_mode("GUIDED")
     controller.rotate_to(TARGET_BEARING_AFTER_ARRIVING)
 
-    time.sleep(20)
+    time.sleep(10)
     logger.info("Mission complete.")
 
 

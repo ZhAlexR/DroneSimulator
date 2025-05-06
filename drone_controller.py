@@ -98,7 +98,7 @@ class DroneController:
                 logger.info("→ Arrived within ±%.1f m", tolerance)
                 break
 
-            if distance <= 10.0:
+            if distance <= 100.0:
                 pitch_pwm = slow_pwm
             else:
                 pitch_pwm = forward_pwm
